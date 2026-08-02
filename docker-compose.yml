@@ -1,0 +1,53 @@
+networks:
+  energy-lab-net:
+    external: true
+
+services:
+  #Shared telemetry store
+  redis:
+    image: redis:7
+    container_name: redis
+    networks:
+      - energy-lab-net
+
+  # Data Center A (High Emission / Fossil Fuel)
+  dc-a:
+    build:
+      context: .
+      dockerfile: dc_server/Dockerfile
+    container_name: dc-a
+    environment:
+      - REGION=dc-a
+      - CARBON_INTENSITY=450
+      - REDIS_HOST=redis
+      - PYTHONUNBUFFERED=1
+    networks:
+      - energy-lab-net
+
+  # Data Center B (Medium Emission / Mixed Grid)
+  dc-b:
+    build:
+      context: .
+      dockerfile: dc_server/Dockerfile
+    container_name: dc-b
+    environment:
+      - REGION=dc-b
+      - CARBON_INTENSITY=220
+      - REDIS_HOST=redis
+      - PYTHONUNBUFFERED=1
+    networks:
+      - energy-lab-net
+
+  # Data Center C (Low Emission / 100% Renewable)
+  dc-c:
+    build:
+      context: .
+      dockerfile: dc_server/Dockerfile
+    container_name: dc-c
+    environment:
+      - REGION=dc-c
+      - CARBON_INTENSITY=15
+      - REDIS_HOST=redis
+      - PYTHONUNBUFFERED=1
+    networks:
+      - energy-lab-net
