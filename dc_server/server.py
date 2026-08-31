@@ -1,19 +1,14 @@
 import asyncio
 import os
-import socket
 import redis.asyncio as aioredis
 from aioquic.asyncio import serve
 from aioquic.quic.configuration import QuicConfiguration
-from aioquic.asyncio.protocol import QuicConnectionProtocol
-from aioquic.quic.parameters import QuicPreferredAddress
-from aioquic.quic.events import StreamDataReceived
 
 REGION = os.getenv("REGION", "dc-a")
 CARBON_INTENSITY = os.getenv("CARBON_INTENSITY", "400")
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
 async def publish_telemetry():
-    """Publishes current carbon intensity to Redis every 5 seconds."""
     r = aioredis.from_url(f"redis://{REDIS_HOST}:6379")
     while True:
         try:
@@ -24,16 +19,15 @@ async def publish_telemetry():
                 "carbon": CARBON_INTENSITY
             })
             print(f"[{REGION}] Updated Redis -> Carbon Intensity: {CARBON_INTENSITY} gCO2/kWh", flush=True)
-        except Exception as e:
-            print(f"[{REGION}] Redis Error: {e}", flush=True)
+        except Exception:
+            pass
         await asyncio.sleep(5)
 
 async def get_greenest_dc():
-    """Queries Redis to locate the DC with the lowest carbon footprint."""
     r = aioredis.from_url(f"redis://{REDIS_HOST}:6379")
     keys = await r.keys("carbon:*")
-    best_dc = None
-    lowest_carbon = float("inf")
+    best_dc = REGION
+    lowest_carbon = int(CARBON_INTENSITY)
 
     for key in keys:
         dc_name = key.decode().split(":")[1]
@@ -45,62 +39,45 @@ async def get_greenest_dc():
                 best_dc = dc_name
     return best_dc, lowest_carbon
 
-class CustomQuicProtocol(QuicConnectionProtocol):
-    def quic_event_received(self, event):
-        if isinstance(event, StreamDataReceived):
-            data = event.data.decode(errors="ignore")
-            print(f"[{REGION}] Received Stream Data: {data}", flush=True)
+def handle_stream(reader, writer):
+    """Synchronous wrapper required by aioquic stream_handler callback."""
+    asyncio.create_task(handle_stream_async(reader, writer))
+
+async def handle_stream_async(reader, writer):
+    try:
+        data = (await reader.read(1024)).decode(errors="ignore")
+        print(f"[{REGION}] Received raw stream payload: {repr(data)}", flush=True)
+        
+        if "DEFERRABLE_WORKLOAD" in data:
+            target_dc, carbon_val = await get_greenest_dc()
+            print(f"[{REGION}] [SMART INGRESS] Workload received. Optimal Green Node: {target_dc} ({carbon_val} gCO2/kWh)", flush=True)
             
-            if "DEFERRABLE_WORKLOAD" in data:
-                asyncio.create_task(self.handle_redirection(event.stream_id))
-                
-        super().quic_event_received(event)
-
-    async def handle_redirection(self, stream_id):
-        target_dc, carbon_val = await get_greenest_dc()
-        print(f"[{REGION}] [CONTROL PLANE] Deferrable workload detected!", flush=True)
-        print(f"[{REGION}] [CONTROL PLANE] Current node intensity: {CARBON_INTENSITY} gCO2/kWh", flush=True)
-        print(f"[{REGION}] [CONTROL PLANE] Optimal Target Node: {target_dc} ({carbon_val} gCO2/kWh)", flush=True)
-
-        response = f"REDIRECT:{target_dc}:4433".encode()
-        self._quic.send_stream_data(stream_id, response, end_stream=True)
-        self.transmit()
-
-async def update_preferred_address(config: QuicConfiguration):
-    while True:
-        target_dc, lowest_carbon = await get_greenest_dc()
-
-        if target_dc and target_dc != REGION:
-            try:
-                ip_str = socket.gethostbyname(target_dc)
-                
-                config.server_preferred_address = QuicPreferredAddress(
-                    ipv4_address=(ip_str, 4433),
-                    ipv6_address=None,
-                    connection_id=os.urandom(8),
-                    stateless_reset_token=os.urandom(16)
-                )
-                print(f"[{REGION}] Transport Parameter Updated: Routing new connections to {target_dc} ({ip_str})")
-            except socket.gaierror:
-                print(f"[{REGION}] DNS resolution for {target_dc} failed. Retrying...")
-                
-        await asyncio.sleep(5)
+            response = f"REDIRECT:{target_dc}:4433".encode()
+            writer.write(response)
+            writer.write_eof()
+    except Exception as e:
+        print(f"[{REGION}] Stream error: {e}", flush=True)
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
 
 async def main():
     configuration = QuicConfiguration(is_client=False)
     configuration.load_cert_chain("certs/tls_cert.pem", "certs/tls_key.pem")
 
     asyncio.create_task(publish_telemetry())
-    asyncio.create_task(update_preferred_address(configuration))
 
-    print(f"[{REGION}] Starting QUIC Data Center Server on port 4433...", flush=True)
+    print(f"[{REGION}] Starting Carbon-Aware QUIC Ingress Server on port 4433...", flush=True)
+    
     await serve(
         "0.0.0.0",
         4433,
         configuration=configuration,
-        create_protocol=CustomQuicProtocol
+        stream_handler=handle_stream
     )
-    await asyncio.Event().wait()
+    await asyncio.get_running_loop().create_future()
 
 if __name__ == "__main__":
     asyncio.run(main())

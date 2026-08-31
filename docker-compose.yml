@@ -1,6 +1,6 @@
 networks:
   energy-lab-net:
-    external: true
+    driver: bridge
 
 services:
   #Shared telemetry store

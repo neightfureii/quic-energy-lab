@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir aioquic redis
+RUN pip install --no-cache-dir aioquic==0.9.20 redis
 
 COPY client/client.py /app/client.py
 

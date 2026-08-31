@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python libraries
-RUN pip install --no-cache-dir aioquic redis
+RUN pip install --no-cache-dir aioquic==0.9.20 redis
 
 # Copy code and certificates
 COPY dc_server/server.py /app/server.py
