@@ -51,3 +51,20 @@ services:
       - PYTHONUNBUFFERED=1
     networks:
       - energy-lab-net
+
+  # Client sending QUIC packets
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    container_name: client
+    environment:
+      - TARGET_HOST=dc-a
+      - TARGET_PORT=4433
+      - PYTHONUNBUFFERED=1
+    networks:
+      - energy-lab-net
+    depends_on:
+      - dc-a
+      - dc-b
+      - dc-c
