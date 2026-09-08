@@ -16,6 +16,8 @@ services:
       context: .
       dockerfile: dc_server/Dockerfile
     container_name: dc-a
+    cap_add:
+      - NET_ADMIN
     environment:
       - REGION=dc-a
       - CARBON_INTENSITY=450
@@ -24,12 +26,13 @@ services:
     networks:
       - energy-lab-net
 
-  # Data Center B (Medium Emission / Mixed Grid)
   dc-b:
     build:
       context: .
       dockerfile: dc_server/Dockerfile
     container_name: dc-b
+    cap_add:
+      - NET_ADMIN
     environment:
       - REGION=dc-b
       - CARBON_INTENSITY=220
@@ -38,12 +41,13 @@ services:
     networks:
       - energy-lab-net
 
-  # Data Center C (Low Emission / 100% Renewable)
   dc-c:
     build:
       context: .
       dockerfile: dc_server/Dockerfile
     container_name: dc-c
+    cap_add:
+      - NET_ADMIN
     environment:
       - REGION=dc-c
       - CARBON_INTENSITY=15

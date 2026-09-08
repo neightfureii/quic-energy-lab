@@ -5,20 +5,26 @@ from aioquic.asyncio import serve
 from aioquic.quic.configuration import QuicConfiguration
 
 REGION = os.getenv("REGION", "dc-a")
-CARBON_INTENSITY = os.getenv("CARBON_INTENSITY", "400")
+CARBON_INTENSITY = int(os.getenv("CARBON_INTENSITY", "400"))
 REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+
+async def update_redis_telemetry(r):
+    """Helper to update telemetry keys."""
+    await r.set(f"carbon:{REGION}", str(CARBON_INTENSITY), ex=15)
+    await r.hset(f"dc:{REGION}", mapping={
+        "ip": REGION,
+        "port": "4433",
+        "carbon": str(CARBON_INTENSITY)
+    })
+    print(f"[{REGION}] Updated Redis -> Carbon Intensity: {CARBON_INTENSITY} gCO2/kWh", flush=True)
 
 async def publish_telemetry():
     r = aioredis.from_url(f"redis://{REDIS_HOST}:6379")
+    # Immediate write on startup so data is instantly available
+    await update_redis_telemetry(r)
     while True:
         try:
-            await r.set(f"carbon:{REGION}", CARBON_INTENSITY, ex=15)
-            await r.hset(f"dc:{REGION}", mapping={
-                "ip": REGION,
-                "port": "4433",
-                "carbon": CARBON_INTENSITY
-            })
-            print(f"[{REGION}] Updated Redis -> Carbon Intensity: {CARBON_INTENSITY} gCO2/kWh", flush=True)
+            await update_redis_telemetry(r)
         except Exception:
             pass
         await asyncio.sleep(5)
@@ -27,7 +33,7 @@ async def get_greenest_dc():
     r = aioredis.from_url(f"redis://{REDIS_HOST}:6379")
     keys = await r.keys("carbon:*")
     best_dc = REGION
-    lowest_carbon = int(CARBON_INTENSITY)
+    lowest_carbon = float('inf')
 
     for key in keys:
         dc_name = key.decode().split(":")[1]
@@ -40,7 +46,6 @@ async def get_greenest_dc():
     return best_dc, lowest_carbon
 
 def handle_stream(reader, writer):
-    """Synchronous wrapper required by aioquic stream_handler callback."""
     asyncio.create_task(handle_stream_async(reader, writer))
 
 async def handle_stream_async(reader, writer):
@@ -55,6 +60,13 @@ async def handle_stream_async(reader, writer):
             response = f"REDIRECT:{target_dc}:4433".encode()
             writer.write(response)
             writer.write_eof()
+            
+        elif "EXECUTE_DEFERRABLE_WORKLOAD" in data:
+            print(f"[{REGION}] [GREEN NODE] Workload successfully executed locally under ultra-low carbon energy ({CARBON_INTENSITY} gCO2/kWh) over simulated 80ms link!", flush=True)
+            ack = f"WORKLOAD_EXECUTED_SUCCESSFULLY_AT_{REGION}".encode()
+            writer.write(ack)
+            writer.write_eof()
+            
     except Exception as e:
         print(f"[{REGION}] Stream error: {e}", flush=True)
     finally:
@@ -68,6 +80,9 @@ async def main():
     configuration.load_cert_chain("certs/tls_cert.pem", "certs/tls_key.pem")
 
     asyncio.create_task(publish_telemetry())
+    
+    # Small pause to let telemetry register before opening port
+    await asyncio.sleep(1)
 
     print(f"[{REGION}] Starting Carbon-Aware QUIC Ingress Server on port 4433...", flush=True)
     
